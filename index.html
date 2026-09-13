@@ -503,7 +503,7 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
   <div class="guest-panel">
     <div class="guest-header">
       <div class="drop-zone" id="drop-zone">
-        &#8679; Drop CSV here or click to browse
+        &#8679; Drop CSV file from SQL here or click to browse
         <input type="file" accept=".csv" onchange="loadCSV(event)">
       </div>
       <div class="upload-status" id="upload-status">No report loaded</div>
@@ -514,7 +514,7 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
     <div class="guest-list-wrap">
       <input type="text" class="guest-search" id="guest-search" placeholder="Search…" oninput="renderList()">
       <div class="printed-count" id="printed-count"></div>
-      <div id="guest-list"><div class="no-guests">Upload your activity<br>report to see guests</div></div>
+      <div id="guest-list"><div class="no-guests"><br></div></div>
     </div>
     <div class="made-by-footer">Proudly made by Ben Salsa 🍹</div>
   </div>
