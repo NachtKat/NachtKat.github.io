@@ -1134,11 +1134,30 @@ if (dz) {
   function syncTime() {
     if (cruiseType === 'classic') {
       syncClassicSelection();
+      syncFilterFromTicket();
       return;
     }
     var val = document.getElementById('inp-time').value;
     document.getElementById('out-time').textContent = subtractMins(val, 15);
     updateHeadline();
+    syncFilterFromTicket();
+  }
+
+  function syncFilterFromTicket() {
+    var filter = document.getElementById('cruise-filter');
+    if (!filter || typeof allGuests === 'undefined' || !allGuests.length) return;
+    var currentTime = document.getElementById('inp-time').value;
+    var match = allGuests.filter(function(g) { return g.type === cruiseType && g.time === currentTime; })[0];
+    var newValue = match ? match.label : '';
+    var hasOption = false;
+    for (var i = 0; i < filter.options.length; i++) {
+      if (filter.options[i].value === newValue) { hasOption = true; break; }
+    }
+    var finalValue = hasOption ? newValue : '';
+    if (filter.value !== finalValue) {
+      filter.value = finalValue;
+      renderList();
+    }
   }
 
   function syncColour() {
