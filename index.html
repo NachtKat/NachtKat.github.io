@@ -516,6 +516,13 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
 .guest-sub { font-size: 11px; color: #fff; font-weight: 400; flex-shrink: 0; white-space: nowrap; }
 .guest-item-row { display: flex; align-items: baseline; gap: 6px; overflow: hidden; }
 .guest-item-row .guest-fullname { flex: 1 1 auto; min-width: 0; }
+.guest-wizard-btn {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 4px; color: #8a8a8a;
+  transition: background 0.12s, color 0.12s;
+}
+.guest-wizard-btn:hover { background: #1a7a7a; color: #fff; }
+.guest-wizard-btn svg { width: 12px; height: 12px; display: block; }
 .printed-count {
   font-size: 10px; color: #1a7a7a; font-weight: bold;
   padding: 5px 0 2px; letter-spacing: 0.05em;
@@ -857,9 +864,18 @@ function renderList() {
   list.innerHTML = filtered.map(function(g) {
     var idx = allGuests.indexOf(g);
     var ticketed = printedGuests.has(idx) ? ' ticketed' : '';
+    var wizardBtn = g.orderId ?
+      '<span class="guest-wizard-btn" title="Open in Wizard" onclick="openInWizard(event, ' + idx + ')">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
+          '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>' +
+          '<polyline points="15 3 21 3 21 9"></polyline>' +
+          '<line x1="10" y1="14" x2="21" y2="3"></line>' +
+        '</svg>' +
+      '</span>' : '';
     return '<div class="guest-item' + ticketed + '" id="gi' + idx + '" onclick="pickGuest(' + idx + ')">' +
       '<div class="guest-item-row">' +
         '<span class="guest-fullname">' + g.name + '</span>' +
+        wizardBtn +
         '<span class="guest-sub">' + g.pax + ' pax' + (g.orderId ? ' \u2014 ' + g.orderId : '') + '</span>' +
       '</div>' +
       '</div>';
@@ -993,6 +1009,19 @@ function pickGuest(idx) {
   document.getElementById('banner-text').textContent =
     g.name + '  \u00b7  ' + g.time + '  \u00b7  ' + g.pax + ' guests \u2014 review then print';
   document.getElementById('guest-banner').classList.add('on');
+}
+
+var WIZARD_SEARCH_URL = 'https://wizard.pursuitcollection.com/Booking/BookingSearch';
+
+function openInWizard(evt, idx) {
+  if (evt) evt.stopPropagation();
+  pickGuest(idx); // selects guest + copies order ID to clipboard, same as clicking the name
+  var g = allGuests[idx];
+  var url = WIZARD_SEARCH_URL;
+  if (g && g.orderId) {
+    url += '#orderid=' + encodeURIComponent(g.orderId);
+  }
+  window.open(url, 'wizardBookingTab');
 }
 
 function clearGuest() {
