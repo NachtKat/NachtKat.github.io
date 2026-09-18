@@ -405,6 +405,29 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
   background: #1e1e1e; color: white;
   display: flex; flex-direction: column; overflow: hidden;
   border-right: 1px solid #2a2a2a;
+  position: relative;
+}
+.copy-toast {
+  position: absolute;
+  bottom: 34px;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  background: #1a7a7a;
+  color: #fff;
+  font-size: 11px;
+  font-weight: bold;
+  padding: 6px 12px;
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  white-space: nowrap;
+  z-index: 5;
+  letter-spacing: 0.02em;
+}
+.copy-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 .sidebar-logo {
   flex-shrink: 0;
@@ -547,6 +570,7 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
       <div class="printed-count" id="printed-count"></div>
       <div id="guest-list"><div class="no-guests"><br></div></div>
     </div>
+    <div class="copy-toast" id="copy-toast"></div>
     <div class="made-by-footer">Proudly made by Ben Salsa 🍹</div>
   </div>
 
@@ -917,12 +941,46 @@ function selectOrAddTime(timeText) {
   sel.selectedIndex = sel.options.length - 1;
 }
 
+function copyToClipboard(text) {
+  if (!text) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(function() { fallbackCopy(text); });
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta);
+}
+
+function showCopyToast(text) {
+  var toast = document.getElementById('copy-toast');
+  if (!toast) return;
+  toast.textContent = 'Copied ' + text;
+  toast.classList.add('show');
+  clearTimeout(window._copyToastTimer);
+  window._copyToastTimer = setTimeout(function() { toast.classList.remove('show'); }, 1100);
+}
+
 function pickGuest(idx) {
   activeIdx = idx;
   var g = allGuests[idx];
   document.querySelectorAll('.guest-item').forEach(function(el) { el.classList.remove('active'); });
   var el = document.getElementById('gi' + idx);
   if (el) el.classList.add('active');
+
+  if (g.orderId) {
+    copyToClipboard(g.orderId);
+    showCopyToast(g.orderId);
+  }
 
   document.getElementById('inp-name').value = g.name;
   document.getElementById('inp-guests').value = g.pax;
