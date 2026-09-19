@@ -439,6 +439,15 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
   color: white;
   border-bottom: 1px solid #2a2a2a;
 }
+.weather-widget {
+  flex-shrink: 0;
+  padding: 10px 14px;
+  font-size: 11px;
+  color: #bbb;
+  line-height: 1.5;
+  border-bottom: 1px solid #2a2a2a;
+}
+.weather-widget .temp { color: #fff; font-weight: bold; }
 .guest-header {
   padding: 16px 14px 12px; background: #1e1e1e;
   flex-shrink: 0; border-bottom: 1px solid #2a2a2a;
@@ -584,35 +593,35 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
   .countdown-cruise.boarding-now  { background: #1a2a1a; }
   .countdown-cruise.departed      { opacity: 0.3; }
   .cruise-time-label {
-    font-size: 11px; font-weight: bold; color: #666;
+    font-size: 11px; font-weight: bold; color: #ddd;
     font-family: Helvetica, Arial, sans-serif;
     min-width: 56px; flex-shrink: 0;
   }
   .cruise-name-label {
-    font-size: 10px; color: #444; flex: 1;
+    font-size: 10px; color: #aaa; flex: 1;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .countdown-timer {
-    font-size: 11px; font-weight: bold; color: #333;
+    font-size: 11px; font-weight: bold; color: #eee;
     font-family: Helvetica, Arial, sans-serif;
     min-width: 42px; text-align: right; flex-shrink: 0;
   }
   .boarding-badge {
     font-size: 9px; font-weight: bold; letter-spacing: 0.12em;
-    text-transform: uppercase; color: #1a7a7a;
-    padding: 2px 6px; border: 1px solid #1a7a7a; border-radius: 3px;
+    text-transform: uppercase; color: #1a9a9a;
+    padding: 2px 6px; border: 1px solid #1a9a9a; border-radius: 3px;
     flex-shrink: 0; display: none;
   }
   .boarding-now .boarding-badge { display: block; }
   @keyframes boardingPulse {
-    0%, 100% { opacity: 1; border-color: #1a7a7a; color: #1a7a7a; }
+    0%, 100% { opacity: 1; border-color: #1a9a9a; color: #1a9a9a; }
     50%       { opacity: 0.3; border-color: #0a4a4a; color: #0a4a4a; }
   }
   .boarding-now .boarding-badge { animation: boardingPulse 1.4s ease-in-out infinite; }
-  .countdown-timer.urgent { color: #c0392b; }
-  .countdown-timer.soon   { color: #e67e22; }
-  .countdown-timer.ok     { color: #444; }
-  .countdown-timer.gone   { color: #2a2a2a; }
+  .countdown-timer.urgent { color: #e74c3c; }
+  .countdown-timer.soon   { color: #f39c12; }
+  .countdown-timer.ok     { color: #eee; }
+  .countdown-timer.gone   { color: #666; }
 </style>
 </head>
 <body>
@@ -622,6 +631,7 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
   <!-- GUEST PANEL -->
   <div class="guest-panel">
     <div class="sidebar-logo">The Passturbator</div>
+    <div class="weather-widget" id="weather-widget">Checking the weather at Lake Minnewanka…</div>
     <div class="countdown-bar" id="countdown-bar"></div>
     <div class="guest-header">
       <div class="drop-zone" id="drop-zone">
@@ -802,20 +812,26 @@ function minsUntil(dt) {
 }
 
 function buildCountdownCruises() {
-  // Merge fixed times with any cruise labels found in the CSV guest list
+  // Merge fixed times with any cruise labels found in the CSV guest list.
+  // Dedupe by time+type so a fixed placeholder and a real CSV booking for
+  // the same actual departure don't both take up a row.
   var cruises = [];
   var seen = {};
 
-  // From CSV guests
+  // From CSV guests (richer, real data — takes priority)
   allGuests.forEach(function(g) {
-    if (!g.time || seen[g.time + g.label]) return;
-    seen[g.time + g.label] = true;
+    if (!g.time) return;
+    var key = g.time + '|' + g.type;
+    if (seen[key]) return;
+    seen[key] = true;
     cruises.push({ label: g.label, time: g.time, boat: g.label.split('\u2014').pop().trim() });
   });
 
-  // Add fixed ones not already in CSV
+  // Add fixed ones not already covered by a real CSV booking at that time+type
   FIXED_CRUISE_TIMES.forEach(function(f) {
-    if (!seen[f.time + f.label]) {
+    var key = f.time + '|' + f.type;
+    if (!seen[key]) {
+      seen[key] = true;
       cruises.push(f);
     }
   });
@@ -830,6 +846,16 @@ function buildCountdownCruises() {
   return cruises;
 }
 
+function formatCountdown(ms) {
+  if (ms < 0) ms = 0;
+  var totalSec = Math.floor(ms / 1000);
+  var h = Math.floor(totalSec / 3600);
+  var m = Math.floor((totalSec % 3600) / 60);
+  var s = totalSec % 60;
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  return h > 0 ? (h + ':' + pad(m) + ':' + pad(s)) : (pad(m) + ':' + pad(s));
+}
+
 function updateCountdown() {
   var bar = document.getElementById('countdown-bar');
   if (!bar) return;
@@ -838,62 +864,50 @@ function updateCountdown() {
   if (!cruises.length) { bar.innerHTML = ''; return; }
 
   var now = new Date();
-  var html = '';
 
+  // Only cruises that haven't departed yet, soonest first, keep current + next 2
+  var upcoming = [];
   cruises.forEach(function(cruise) {
     var dt = parseCruiseTimeToDate(cruise.time);
     if (!dt) return;
-    // Board 15 mins before departure
-    var boardTime = new Date(dt.getTime() - 15 * 60000);
-    var minsToDepart = minsUntil(dt);
-    var minsToBoard  = minsUntil(boardTime);
+    var msToDepart = dt - now;
+    if (msToDepart < 0) return; // already departed — drop it
+    upcoming.push({ cruise: cruise, dt: dt, msToDepart: msToDepart });
+  });
+  upcoming.sort(function(a, b) { return a.dt - b.dt; });
+  var shown = upcoming.slice(0, 3);
 
-    // Skip cruises departed more than 30 mins ago
-    if (minsToDepart < -30) return;
+  if (!shown.length) { bar.innerHTML = ''; return; }
 
-    var stateClass = '';
-    var timerText  = '';
+  var html = '';
+  shown.forEach(function(item) {
+    var boardTime = new Date(item.dt.getTime() - 15 * 60000);
+    var boarding = now >= boardTime;
+    var msToDepart = item.msToDepart;
+
+    var stateClass = boarding ? 'boarding-now' : '';
     var timerClass = 'ok';
-    var showBadge  = false;
-
-    if (minsToDepart < 0) {
-      // Departed
-      stateClass = 'departed';
-      timerText  = 'Gone';
-      timerClass = 'gone';
-    } else if (minsToBoard <= 0) {
-      // Boarding now
-      stateClass = 'boarding-now';
-      timerText  = minsToDepart + 'm';
-      timerClass = minsToDepart <= 5 ? 'urgent' : 'soon';
-      showBadge  = true;
-    } else if (minsToBoard <= 30) {
-      // Boarding soon
-      stateClass = 'boarding-soon';
-      timerText  = minsToBoard + 'm';
-      timerClass = minsToBoard <= 10 ? 'soon' : 'ok';
-    } else {
-      timerText  = minsToBoard > 60
-        ? Math.floor(minsToBoard/60) + 'h ' + (minsToBoard%60) + 'm'
-        : minsToBoard + 'm';
+    if (boarding) {
+      timerClass = msToDepart <= 5 * 60000 ? 'urgent' : 'soon';
+    } else if (msToDepart <= 30 * 60000) {
+      timerClass = 'soon';
     }
 
-    var shortLabel = cruise.label || cruise.time;
-    // Shorten label for display
+    var shortLabel = item.cruise.label || item.cruise.time;
     shortLabel = shortLabel.replace('Daughter Of The Peaks II','DPII')
                            .replace('Minnewanka II','MII')
                            .replace('Alberta Explorer','AE')
                            .replace('Sandra Lynn','SL');
 
     html += '<div class="countdown-cruise ' + stateClass + '">' +
-      '<span class="cruise-time-label">' + cruise.time + '</span>' +
+      '<span class="cruise-time-label">' + item.cruise.time + '</span>' +
       '<span class="cruise-name-label">' + shortLabel + '</span>' +
-      '<span class="countdown-timer ' + timerClass + '">' + timerText + '</span>' +
+      '<span class="countdown-timer ' + timerClass + '">' + formatCountdown(msToDepart) + '</span>' +
       '<span class="boarding-badge">BOARDING</span>' +
       '</div>';
   });
 
-  bar.innerHTML = html || '';
+  bar.innerHTML = html;
 }
 
 function isGuestLate(guest) {
@@ -902,8 +916,68 @@ function isGuestLate(guest) {
   return new Date() > dt;
 }
 
-// Start countdown ticker
-setInterval(updateCountdown, 30000);
+// Start countdown ticker — every second, for a live HH:MM:SS display
+setInterval(updateCountdown, 1000);
+
+// ═══════════════════════════════════════════════════════
+//  LAKE MINNEWANKA WEATHER
+// ═══════════════════════════════════════════════════════
+
+var LAKE_MINNEWANKA_LAT = 51.2380;
+var LAKE_MINNEWANKA_LON = -115.4383;
+
+function weatherCodeToText(code) {
+  var map = {
+    0: 'clear skies', 1: 'mostly clear', 2: 'partly cloudy', 3: 'overcast',
+    45: 'foggy', 48: 'foggy',
+    51: 'light drizzle', 53: 'drizzle', 55: 'heavy drizzle',
+    56: 'freezing drizzle', 57: 'freezing drizzle',
+    61: 'light rain', 63: 'rain', 65: 'heavy rain',
+    66: 'freezing rain', 67: 'freezing rain',
+    71: 'light snow', 73: 'snow', 75: 'heavy snow', 77: 'snow grains',
+    80: 'rain showers', 81: 'rain showers', 82: 'heavy rain showers',
+    85: 'snow showers', 86: 'heavy snow showers',
+    95: 'thunderstorms', 96: 'thunderstorms with hail', 99: 'thunderstorms with hail'
+  };
+  return map[code] || 'mixed conditions';
+}
+
+function weatherCodeToEmoji(code) {
+  var map = {
+    0: '\u2600\ufe0f', 1: '\ud83c\udf24\ufe0f', 2: '\u26c5', 3: '\u2601\ufe0f',
+    45: '\ud83c\udf2b\ufe0f', 48: '\ud83c\udf2b\ufe0f',
+    51: '\ud83c\udf26\ufe0f', 53: '\ud83c\udf26\ufe0f', 55: '\ud83c\udf27\ufe0f',
+    56: '\ud83c\udf28\ufe0f', 57: '\ud83c\udf28\ufe0f',
+    61: '\ud83c\udf26\ufe0f', 63: '\ud83c\udf27\ufe0f', 65: '\ud83c\udf27\ufe0f',
+    66: '\ud83c\udf28\ufe0f', 67: '\ud83c\udf28\ufe0f',
+    71: '\ud83c\udf28\ufe0f', 73: '\u2744\ufe0f', 75: '\u2744\ufe0f', 77: '\u2744\ufe0f',
+    80: '\ud83c\udf26\ufe0f', 81: '\ud83c\udf27\ufe0f', 82: '\ud83c\udf27\ufe0f',
+    85: '\ud83c\udf28\ufe0f', 86: '\u2744\ufe0f',
+    95: '\u26c8\ufe0f', 96: '\u26c8\ufe0f', 99: '\u26c8\ufe0f'
+  };
+  return map[code] || '\ud83c\udf24\ufe0f';
+}
+
+function loadWeather() {
+  var el = document.getElementById('weather-widget');
+  if (!el) return;
+  fetch('https://api.open-meteo.com/v1/forecast?latitude=' + LAKE_MINNEWANKA_LAT +
+        '&longitude=' + LAKE_MINNEWANKA_LON + '&current_weather=true&temperature_unit=celsius')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var cw = data.current_weather;
+      if (!cw) throw new Error('no data');
+      var desc = weatherCodeToText(cw.weathercode);
+      var emoji = weatherCodeToEmoji(cw.weathercode);
+      el.innerHTML = emoji + ' The weather at Lake Minnewanka is <span class="temp">' +
+        Math.round(cw.temperature) + '\u00b0C, ' + desc + '</span> \u2014 happy cruising!';
+    })
+    .catch(function() {
+      el.textContent = 'Weather unavailable right now \u2014 happy cruising anyway!';
+    });
+}
+loadWeather();
+setInterval(loadWeather, 15 * 60000);
 // Also re-render guest list every minute to update late flags
 setInterval(function() { if (allGuests.length) renderList(); }, 60000);
 
@@ -1056,6 +1130,7 @@ function renderList() {
   var list = document.getElementById('guest-list');
   if (!filtered.length) {
     list.innerHTML = '<div class="no-guests">No guests match</div>';
+    updatePrintedCount([]);
     return;
   }
 
@@ -1071,7 +1146,8 @@ function renderList() {
           '<line x1="10" y1="14" x2="21" y2="3"></line>' +
         '</svg>' +
       '</span>' : '';
-    return '<div class="guest-item' + ticketed + late + '" id="gi' + idx + '" onclick="pickGuest(' + idx + ')">' +
+    var active = (idx === activeIdx) ? ' active' : '';
+    return '<div class="guest-item' + ticketed + late + active + '" id="gi' + idx + '" onclick="pickGuest(' + idx + ')">' +
       '<div class="guest-item-row">' +
         '<span class="guest-fullname">' + g.name + '</span>' +
         wizardBtn +
@@ -1079,6 +1155,8 @@ function renderList() {
       '</div>' +
       '</div>';
   }).join('');
+
+  updatePrintedCount(filtered);
 }
 
 function onCruiseFilterChange() {
@@ -1101,23 +1179,27 @@ var printedGuests = new Set();
 function markPrinted() {
   if (activeIdx !== null) {
     printedGuests.add(activeIdx);
-    var el = document.getElementById('gi' + activeIdx);
-    if (el) el.classList.add('ticketed');
-    updatePrintedCount();
+    renderList();
   }
   window.print();
 }
 
-function updatePrintedCount() {
+function updatePrintedCount(filtered) {
   var el = document.getElementById('printed-count');
   if (!el) return;
-  var n = printedGuests.size;
-  if (n > 0) {
-    el.textContent = n + ' ticket' + (n > 1 ? 's' : '') + ' printed this session';
-    el.classList.add('visible');
-  } else {
+  if (!filtered) filtered = allGuests;
+  if (!filtered.length) {
     el.classList.remove('visible');
+    return;
   }
+  var totalPax = 0, boardedPax = 0;
+  filtered.forEach(function(g) {
+    var idx = allGuests.indexOf(g);
+    totalPax += g.pax;
+    if (printedGuests.has(idx)) boardedPax += g.pax;
+  });
+  el.textContent = boardedPax + ' of ' + totalPax + ' boarded';
+  el.classList.add('visible');
 }
 
 function timeToMinutes(timeStr) {
@@ -1417,7 +1499,19 @@ if (dz) {
     return dh + ':' + (nm < 10 ? '0' + nm : nm) + ' ' + np;
   }
 
+  var _last5pmWarnValue = null;
+  function check5pmWarning() {
+    var val = document.getElementById('inp-time').value;
+    if (val === '5:00 PM' && _last5pmWarnValue !== '5:00 PM') {
+      setTimeout(function() {
+        alert('Remember to check tickets for beer or classic!!');
+      }, 0);
+    }
+    _last5pmWarnValue = val;
+  }
+
   function syncTime() {
+    check5pmWarning();
     if (cruiseType === 'classic') {
       syncClassicSelection();
       syncFilterFromTicket();
