@@ -553,6 +553,66 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
   .ticket-panel { display: block; }
   .ticket-scroll { overflow: visible; }
 }
+
+  /* ── Late arrival flag ── */
+  .guest-item.late .guest-fullname { color: #c0392b !important; }
+  .guest-item.late::before {
+    content: '⚠ LATE';
+    font-size: 8px; font-weight: bold; letter-spacing: 0.1em;
+    color: #c0392b; margin-right: 6px; flex-shrink: 0;
+  }
+  .guest-item.late .guest-item-row { display: flex; align-items: baseline; }
+
+  /* ── Departure countdown bar ── */
+  .countdown-bar {
+    background: #111;
+    border-bottom: 1px solid #1e1e1e;
+    padding: 0;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .countdown-cruise {
+    padding: 7px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid #1a1a1a;
+    transition: background 0.3s;
+  }
+  .countdown-cruise:last-child { border-bottom: none; }
+  .countdown-cruise.boarding-soon { background: #1a2a1a; }
+  .countdown-cruise.boarding-now  { background: #1a2a1a; }
+  .countdown-cruise.departed      { opacity: 0.3; }
+  .cruise-time-label {
+    font-size: 11px; font-weight: bold; color: #666;
+    font-family: Helvetica, Arial, sans-serif;
+    min-width: 56px; flex-shrink: 0;
+  }
+  .cruise-name-label {
+    font-size: 10px; color: #444; flex: 1;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .countdown-timer {
+    font-size: 11px; font-weight: bold; color: #333;
+    font-family: Helvetica, Arial, sans-serif;
+    min-width: 42px; text-align: right; flex-shrink: 0;
+  }
+  .boarding-badge {
+    font-size: 9px; font-weight: bold; letter-spacing: 0.12em;
+    text-transform: uppercase; color: #1a7a7a;
+    padding: 2px 6px; border: 1px solid #1a7a7a; border-radius: 3px;
+    flex-shrink: 0; display: none;
+  }
+  .boarding-now .boarding-badge { display: block; }
+  @keyframes boardingPulse {
+    0%, 100% { opacity: 1; border-color: #1a7a7a; color: #1a7a7a; }
+    50%       { opacity: 0.3; border-color: #0a4a4a; color: #0a4a4a; }
+  }
+  .boarding-now .boarding-badge { animation: boardingPulse 1.4s ease-in-out infinite; }
+  .countdown-timer.urgent { color: #c0392b; }
+  .countdown-timer.soon   { color: #e67e22; }
+  .countdown-timer.ok     { color: #444; }
+  .countdown-timer.gone   { color: #2a2a2a; }
 </style>
 </head>
 <body>
@@ -562,6 +622,7 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
   <!-- GUEST PANEL -->
   <div class="guest-panel">
     <div class="sidebar-logo">The Passturbator</div>
+    <div class="countdown-bar" id="countdown-bar"></div>
     <div class="guest-header">
       <div class="drop-zone" id="drop-zone">
         &#8679; Drop CSV file from SQL here or click to browse
@@ -709,6 +770,143 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
 </div>
 
 <script>
+
+// ═══════════════════════════════════════════════════════
+//  DEPARTURE COUNTDOWN + LATE ARRIVAL FLAG
+// ═══════════════════════════════════════════════════════
+
+// All cruise departure times — pulled from cruise labels in the CSV
+// plus the fixed premium/beer times
+var FIXED_CRUISE_TIMES = [
+  { label: 'DPII 10:00 AM',   time: '10:00 AM', boat: 'Daughter Of The Peaks II', type: 'premium'  },
+  { label: 'DPII 12:00 PM',   time: '12:00 PM', boat: 'Daughter Of The Peaks II', type: 'premium'  },
+  { label: 'DPII 6:00 PM',    time: '6:00 PM',  boat: 'Daughter Of The Peaks II', type: 'premium'  },
+  { label: 'Beer Voyage 5PM', time: '5:00 PM',  boat: 'Minnewanka II',            type: 'beer'     },
+];
+
+function parseCruiseTimeToDate(timeStr) {
+  // Parse "10:00 AM", "9:45", "1:30 PM" etc into today's Date
+  var now = new Date();
+  var m = timeStr.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+  if (!m) return null;
+  var h = parseInt(m[1]), min = parseInt(m[2]);
+  var period = (m[3] || '').toUpperCase();
+  if (period === 'PM' && h !== 12) h += 12;
+  if (period === 'AM' && h === 12) h = 0;
+  var d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, min, 0, 0);
+  return d;
+}
+
+function minsUntil(dt) {
+  return Math.round((dt - new Date()) / 60000);
+}
+
+function buildCountdownCruises() {
+  // Merge fixed times with any cruise labels found in the CSV guest list
+  var cruises = [];
+  var seen = {};
+
+  // From CSV guests
+  allGuests.forEach(function(g) {
+    if (!g.time || seen[g.time + g.label]) return;
+    seen[g.time + g.label] = true;
+    cruises.push({ label: g.label, time: g.time, boat: g.label.split('\u2014').pop().trim() });
+  });
+
+  // Add fixed ones not already in CSV
+  FIXED_CRUISE_TIMES.forEach(function(f) {
+    if (!seen[f.time + f.label]) {
+      cruises.push(f);
+    }
+  });
+
+  // Sort by time
+  cruises.sort(function(a, b) {
+    var ta = parseCruiseTimeToDate(a.time), tb = parseCruiseTimeToDate(b.time);
+    if (!ta || !tb) return 0;
+    return ta - tb;
+  });
+
+  return cruises;
+}
+
+function updateCountdown() {
+  var bar = document.getElementById('countdown-bar');
+  if (!bar) return;
+
+  var cruises = buildCountdownCruises();
+  if (!cruises.length) { bar.innerHTML = ''; return; }
+
+  var now = new Date();
+  var html = '';
+
+  cruises.forEach(function(cruise) {
+    var dt = parseCruiseTimeToDate(cruise.time);
+    if (!dt) return;
+    // Board 15 mins before departure
+    var boardTime = new Date(dt.getTime() - 15 * 60000);
+    var minsToDepart = minsUntil(dt);
+    var minsToBoard  = minsUntil(boardTime);
+
+    // Skip cruises departed more than 30 mins ago
+    if (minsToDepart < -30) return;
+
+    var stateClass = '';
+    var timerText  = '';
+    var timerClass = 'ok';
+    var showBadge  = false;
+
+    if (minsToDepart < 0) {
+      // Departed
+      stateClass = 'departed';
+      timerText  = 'Gone';
+      timerClass = 'gone';
+    } else if (minsToBoard <= 0) {
+      // Boarding now
+      stateClass = 'boarding-now';
+      timerText  = minsToDepart + 'm';
+      timerClass = minsToDepart <= 5 ? 'urgent' : 'soon';
+      showBadge  = true;
+    } else if (minsToBoard <= 30) {
+      // Boarding soon
+      stateClass = 'boarding-soon';
+      timerText  = minsToBoard + 'm';
+      timerClass = minsToBoard <= 10 ? 'soon' : 'ok';
+    } else {
+      timerText  = minsToBoard > 60
+        ? Math.floor(minsToBoard/60) + 'h ' + (minsToBoard%60) + 'm'
+        : minsToBoard + 'm';
+    }
+
+    var shortLabel = cruise.label || cruise.time;
+    // Shorten label for display
+    shortLabel = shortLabel.replace('Daughter Of The Peaks II','DPII')
+                           .replace('Minnewanka II','MII')
+                           .replace('Alberta Explorer','AE')
+                           .replace('Sandra Lynn','SL');
+
+    html += '<div class="countdown-cruise ' + stateClass + '">' +
+      '<span class="cruise-time-label">' + cruise.time + '</span>' +
+      '<span class="cruise-name-label">' + shortLabel + '</span>' +
+      '<span class="countdown-timer ' + timerClass + '">' + timerText + '</span>' +
+      '<span class="boarding-badge">BOARDING</span>' +
+      '</div>';
+  });
+
+  bar.innerHTML = html || '';
+}
+
+function isGuestLate(guest) {
+  var dt = parseCruiseTimeToDate(guest.time);
+  if (!dt) return false;
+  return new Date() > dt;
+}
+
+// Start countdown ticker
+setInterval(updateCountdown, 30000);
+// Also re-render guest list every minute to update late flags
+setInterval(function() { if (allGuests.length) renderList(); }, 60000);
+
 // ── CSV guest list ──────────────────────────────────────────
 
 var allGuests = [];
@@ -864,6 +1062,7 @@ function renderList() {
   list.innerHTML = filtered.map(function(g) {
     var idx = allGuests.indexOf(g);
     var ticketed = printedGuests.has(idx) ? ' ticketed' : '';
+    var late = (!printedGuests.has(idx) && isGuestLate(g)) ? ' late' : '';
     var wizardBtn = g.orderId ?
       '<span class="guest-wizard-btn" title="Open in Wizard" onclick="openInWizard(event, ' + idx + ')">' +
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
@@ -872,7 +1071,7 @@ function renderList() {
           '<line x1="10" y1="14" x2="21" y2="3"></line>' +
         '</svg>' +
       '</span>' : '';
-    return '<div class="guest-item' + ticketed + '" id="gi' + idx + '" onclick="pickGuest(' + idx + ')">' +
+    return '<div class="guest-item' + ticketed + late + '" id="gi' + idx + '" onclick="pickGuest(' + idx + ')">' +
       '<div class="guest-item-row">' +
         '<span class="guest-fullname">' + g.name + '</span>' +
         wizardBtn +
@@ -1257,6 +1456,7 @@ if (dz) {
     document.getElementById('out-cruise').textContent = val;
   }
 
+  updateCountdown();
   document.getElementById('out-headline').dataset.title = 'Premium Cruise Boarding Pass';
   rebuildTimes('premium');
   syncCruise();
@@ -1298,7 +1498,8 @@ if (dz) {
       document.getElementById('cell-name').style.overflow = '';
       document.getElementById('cell-name').style.padding  = '';
     }
-    document.getElementById('out-headline').dataset.title = titles[t];
+    updateCountdown();
+  document.getElementById('out-headline').dataset.title = titles[t];
 
     var passBody = document.querySelector('.pass-body');
     passBody.classList.remove('classic-mode');
