@@ -1242,10 +1242,18 @@ function parseCSV(text, filename) {
     var name     = (row[iName]     || '').trim();
     var rawTime  = (row[iTime]     || '').trim();
     var schedule = (row[iSchedule] || '').trim();
-    // The booking system exports the Beer Voyage schedule as the internal
-    // code "B02" rather than a friendly name — normalize it so it shows
-    // as "Beer" and correctly gets picked up as the beer type below.
-    schedule = schedule.replace(/\bB0?2\b/gi, 'Beer');
+    // The booking system exports the Beer Voyage schedule as an internal
+    // code like "B02" (sometimes with stray extra text attached, e.g.
+    // "B02 5:00") rather than a friendly name. Detect it by the tail
+    // segment starting with that code and replace the whole tail with a
+    // clean "Beer" — this also feeds guessType() below so it correctly
+    // gets picked up as the beer type, not misclassified as classic.
+    var scheduleParts = schedule.split('>');
+    var scheduleTail = scheduleParts[scheduleParts.length - 1].trim();
+    if (/^b[0o]?2\b/i.test(scheduleTail)) {
+      scheduleParts[scheduleParts.length - 1] = ' Beer';
+      schedule = scheduleParts.join('>');
+    }
     var pax      = parseInt(row[iPax]) || 1;
     var orderId  = iOrder !== -1 ? (row[iOrder] || '').trim() : '';
 
