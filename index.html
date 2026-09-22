@@ -558,11 +558,10 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
 .guest-item.active { background: #163636; border-color: #1a7a7a; }
 .guest-item.ticketed { opacity: 0.4; }
 .guest-item.ticketed .guest-fullname { text-decoration: line-through; }
-.guest-item.ticketed::after {
-  content: '✓ printed';
+.guest-ticketed-badge {
   position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
   font-size: 9px; font-weight: bold; letter-spacing: 0.08em;
-  text-transform: uppercase; color: #1a9a9a;
+  text-transform: uppercase; color: #1a9a9a; white-space: nowrap;
 }
 .guest-fullname { font-size: 12.5px; font-weight: 600; color: #e9e9e9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .guest-sub { font-size: 11px; color: #fff; font-weight: 400; flex-shrink: 0; white-space: nowrap; }
@@ -708,7 +707,7 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
       <div id="guest-list"><div class="no-guests"><br></div></div>
     </div>
     <div class="copy-toast" id="copy-toast"></div>
-    <div class="made-by-footer">Proudly made by Ben Salsa 🍹</div>
+    <div class="made-by-footer">Proudly made by Ben Salas Germain :))</div>
   </div>
 
   <!-- TICKET PANEL -->
@@ -1121,14 +1120,19 @@ function cloudSetGuests(guests, filename) {
 
 function cloudSetPrinted(key, val) {
   if (!db || !key) return;
-  db.ref('cloudPrinted/' + fbKey(key)).set(val ? true : null);
+  db.ref('cloudPrinted/' + fbKey(key)).set(val || null);
 }
 
 var lastPrintedMap = {};
 function reapplyPrintedFromCloud() {
   printedGuests = new Set();
+  printedGuestRows = {};
   allGuests.forEach(function(g, idx) {
-    if (g.key && lastPrintedMap[fbKey(g.key)]) printedGuests.add(idx);
+    var entry = g.key ? lastPrintedMap[fbKey(g.key)] : null;
+    if (entry) {
+      printedGuests.add(idx);
+      if (typeof entry === 'object' && entry.row) printedGuestRows[idx] = entry.row;
+    }
   });
   renderList();
 }
@@ -1140,6 +1144,7 @@ function resetBoardingCloud() {
     logActivity('reset the board');
   } else {
     printedGuests = new Set();
+    printedGuestRows = {};
     renderList();
   }
 }
@@ -1311,6 +1316,17 @@ function fmtTime(raw) {
   return m[1] + ':' + m[2] + ' ' + m[3].toUpperCase();
 }
 
+// Double-checks a guest/voyage's true type from its label text, so a
+// guest never ends up on the wrong tab (e.g. printed as Classic when
+// they're really on Premium or Beer) even if the source data's own
+// type field is off.
+function labelType(label, fallback) {
+  var s = (label || '').toLowerCase();
+  if (s.indexOf('premium') !== -1) return 'premium';
+  if (s.indexOf('beer') !== -1) return 'beer';
+  return fallback;
+}
+
 function guessType(s) {
   s = s.toLowerCase();
   if (s.indexOf('premium') !== -1) return 'premium';
@@ -1369,12 +1385,16 @@ function renderList() {
         '</svg>' +
       '</span>' : '';
     var active = (idx === activeIdx) ? ' active' : '';
+    var rowVal = printedGuestRows[idx];
+    var badge = printedGuests.has(idx) ?
+      '<span class="guest-ticketed-badge">\u2713 printed' + (rowVal ? ' \u2014 Row ' + rowVal : '') + '</span>' : '';
     return '<div class="guest-item' + ticketed + late + active + '" id="gi' + idx + '" onclick="pickGuest(' + idx + ')">' +
       '<div class="guest-item-row">' +
         '<span class="guest-fullname">' + g.name + '</span>' +
         wizardBtn +
         '<span class="guest-sub">' + g.pax + ' pax' + (g.orderId ? ' \u2014 ' + g.orderId : '') + '</span>' +
       '</div>' +
+      badge +
       '</div>';
   }).join('');
 
@@ -1386,7 +1406,7 @@ function onCruiseFilterChange() {
   if (label) {
     var match = allGuests.filter(function(g) { return g.label === label; })[0];
     if (match) {
-      setType(match.type);
+      setType(labelType(match.label, match.type));
       selectOrAddTime(match.time);
       syncTime();
       sync();
@@ -1397,12 +1417,15 @@ function onCruiseFilterChange() {
 
 var activeIdx = null;
 var printedGuests = new Set();
+var printedGuestRows = {}; // idx -> row/seat value the ticket was printed with
 
 function markPrinted() {
   if (activeIdx !== null) {
     printedGuests.add(activeIdx);
+    var rowVal = document.getElementById('inp-seat').value || '';
+    printedGuestRows[activeIdx] = rowVal;
     var g = allGuests[activeIdx];
-    if (g && g.key) cloudSetPrinted(g.key, true);
+    if (g && g.key) cloudSetPrinted(g.key, { printed: true, row: rowVal });
     if (g) logActivity('marked ' + g.name + ' boarded');
     renderList();
   }
@@ -1506,7 +1529,7 @@ function pickGuest(idx) {
 
   document.getElementById('inp-name').value = g.name;
   document.getElementById('inp-guests').value = g.pax;
-  setType(g.type);
+  setType(labelType(g.label, g.type));
 
   selectOrAddTime(g.time);
   syncTime();
@@ -1691,6 +1714,22 @@ if (dz) {
     var opt = sel.options[sel.selectedIndex];
     if (!opt) return;
 
+    // Some slots in the classic time list are really Premium or Beer
+    // sailings (e.g. "10:00 AM — DPII PREMIUM", "5:00 PM — SL — BEER").
+    // Flip the whole tab to match so the printed ticket is never a
+    // Classic pass for a guest who's actually on Premium/Beer, or vice versa.
+    var cruiseText = (opt.dataset.cruise || '').toUpperCase();
+    var overrideType = cruiseText.indexOf('PREMIUM') !== -1 ? 'premium' :
+                        cruiseText.indexOf('BEER')    !== -1 ? 'beer'    : null;
+    if (overrideType && cruiseType === 'classic') {
+      var pickedTime = opt.value;
+      setType(overrideType);
+      selectOrAddTime(pickedTime);
+      syncTime();
+      sync();
+      return;
+    }
+
     document.getElementById('out-time').textContent = subtractMins(opt.value, 15);
 
     // Drive the actual Line Colour / Cruise controls from the picked time,
@@ -1810,7 +1849,7 @@ if (dz) {
       premium: 'Premium Cruise Boarding Pass',
       classic: 'Classic Cruise Boarding Pass',
       junior:  'Junior Explorer Boarding Pass',
-      beer:    'Beer Voyage Boarding Pass'
+      beer:    'Beer Voyage Boarding Pass 🍺'
     };
 
     if (noName) {
