@@ -1166,6 +1166,16 @@ if (db) {
     reapplyPrintedFromCloud();
   });
 
+  // ── Settings sync — any change to tab/time/colour/boat pushes here ──
+  var _ignoreSettingsUpdate = false;
+  db.ref('cloudSettings').on('value', function(snap) {
+    var s = snap.val();
+    if (!s || _ignoreSettingsUpdate) return;
+    _ignoreSettingsUpdate = true;
+    applyCloudSettings(s);
+    setTimeout(function() { _ignoreSettingsUpdate = false; }, 500);
+  });
+
   // limitToLast(1) fires once immediately with whatever the last entry
   // already is (existing history) — skip that first replay so reloading
   // the page doesn't pop up a stale toast, then show every new one live.
@@ -1181,6 +1191,67 @@ if (db) {
 
 var myNameInput = document.getElementById('my-name');
 if (myNameInput) myNameInput.value = getMyName();
+
+
+// ═══════════════════════════════════════════════════════
+//  SETTINGS SYNC — pushes tab/time/colour/boat to Firebase
+//  so all computers stay on the same config in real time
+// ═══════════════════════════════════════════════════════
+var _settingsPushTimer = null;
+
+function pushSettings() {
+  if (!db) return;
+  clearTimeout(_settingsPushTimer);
+  _settingsPushTimer = setTimeout(function() {
+    var settings = {
+      type:   cruiseType,
+      time:   document.getElementById('inp-time')   ? document.getElementById('inp-time').value   : '',
+      colour: document.getElementById('inp-colour') ? document.getElementById('inp-colour').value : '',
+      cruise: document.getElementById('inp-cruise') ? document.getElementById('inp-cruise').value : '',
+      ts:     Date.now()
+    };
+    db.ref('cloudSettings').set(settings);
+  }, 300);
+}
+
+function applyCloudSettings(s) {
+  // Apply type tab first
+  if (s.type && s.type !== cruiseType) {
+    setType(s.type);
+  }
+
+  // Apply time
+  if (s.time) {
+    var timeSel = document.getElementById('inp-time');
+    if (timeSel) {
+      for (var i = 0; i < timeSel.options.length; i++) {
+        if (timeSel.options[i].value === s.time || timeSel.options[i].text === s.time) {
+          timeSel.selectedIndex = i; break;
+        }
+      }
+      syncTime();
+    }
+  }
+
+  // Apply colour (if not locked)
+  if (s.colour && s.type !== 'premium' && s.type !== 'beer') {
+    var colSel = document.getElementById('inp-colour');
+    if (colSel) { colSel.value = s.colour; syncColour(); }
+  }
+
+  // Apply cruise/boat
+  if (s.cruise) {
+    var cruiseSel = document.getElementById('inp-cruise');
+    if (cruiseSel) {
+      for (var j = 0; j < cruiseSel.options.length; j++) {
+        if (cruiseSel.options[j].text === s.cruise || cruiseSel.options[j].value === s.cruise) {
+          cruiseSel.selectedIndex = j; break;
+        }
+      }
+      syncCruise();
+    }
+  }
+}
 
 // ── CSV guest list ──────────────────────────────────────────
 
@@ -1749,12 +1820,14 @@ if (dz) {
     if (cruiseType === 'classic') {
       syncClassicSelection();
       syncFilterFromTicket();
+      pushSettings();
       return;
     }
     var val = document.getElementById('inp-time').value;
     document.getElementById('out-time').textContent = subtractMins(val, 15);
     updateHeadline();
     syncFilterFromTicket();
+    pushSettings();
   }
 
   function syncFilterFromTicket() {
@@ -1777,6 +1850,7 @@ if (dz) {
   function syncColour() {
     var val = document.getElementById('inp-colour').value;
     document.getElementById('out-colour').textContent = val;
+    pushSettings();
   }
 
   function syncCruise() {
@@ -1828,6 +1902,7 @@ if (dz) {
     }
     updateCountdown();
   document.getElementById('out-headline').dataset.title = titles[t];
+    pushSettings();
 
     var passBody = document.querySelector('.pass-body');
     passBody.classList.remove('classic-mode');
