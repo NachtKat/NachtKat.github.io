@@ -99,6 +99,14 @@
     white-space: nowrap;
   }
   .btn-print:hover { background: #eee; }
+  .btn-save-config {
+    padding: 7px 12px; background: transparent; color: #555;
+    border: 1px solid #444; border-radius: 4px;
+    font-family: Helvetica, Arial, sans-serif; font-size: 10px;
+    font-weight: bold; letter-spacing: 0.06em; text-transform: uppercase;
+    cursor: pointer; white-space: nowrap; margin-left: 6px;
+  }
+  .btn-save-config:hover { border-color: #1a7a7a; color: #1a7a7a; }
 
   /* ── Preview ── */
   .preview-area {
@@ -769,6 +777,8 @@ html, body { margin: 0; padding: 0; height: 100%; box-sizing: border-box; }
   </div>
 
   <button class="btn-print" onclick="markPrinted()">🖨 Print</button>
+    <button class="btn-save-config" onclick="saveCruiseConfig()" title="Save current colour+boat for this time slot for everyone">💾 Save config</button>
+    <div id="config-toast" style="font-size:9px;color:#1a7a7a;letter-spacing:0.06em;opacity:0;transition:opacity 0.4s;margin-top:4px;"></div>
 </div>
 
 <!-- PASS -->
@@ -1166,15 +1176,8 @@ if (db) {
     reapplyPrintedFromCloud();
   });
 
-  // ── Settings sync — any change to tab/time/colour/boat pushes here ──
-  var _ignoreSettingsUpdate = false;
-  db.ref('cloudSettings').on('value', function(snap) {
-    var s = snap.val();
-    if (!s || _ignoreSettingsUpdate) return;
-    _ignoreSettingsUpdate = true;
-    applyCloudSettings(s);
-    setTimeout(function() { _ignoreSettingsUpdate = false; }, 500);
-  });
+  // Cruise config sync — loads saved schedule configs
+  loadCruiseConfigs();
 
   // limitToLast(1) fires once immediately with whatever the last entry
   // already is (existing history) — skip that first replay so reloading
@@ -1194,64 +1197,64 @@ if (myNameInput) myNameInput.value = getMyName();
 
 
 // ═══════════════════════════════════════════════════════
-//  SETTINGS SYNC — pushes tab/time/colour/boat to Firebase
-//  so all computers stay on the same config in real time
+//  CRUISE CONFIG SYNC
+//  Saves colour+boat per cruise time slot so the schedule
+//  can be updated once and everyone sees it.
+//  Does NOT sync live operator selections.
 // ═══════════════════════════════════════════════════════
-var _settingsPushTimer = null;
 
-function pushSettings() {
+// Save config for a specific cruise slot (called manually via "Save Config" button)
+function saveCruiseConfig() {
   if (!db) return;
-  clearTimeout(_settingsPushTimer);
-  _settingsPushTimer = setTimeout(function() {
-    var settings = {
-      type:   cruiseType,
-      time:   document.getElementById('inp-time')   ? document.getElementById('inp-time').value   : '',
-      colour: document.getElementById('inp-colour') ? document.getElementById('inp-colour').value : '',
-      cruise: document.getElementById('inp-cruise') ? document.getElementById('inp-cruise').value : '',
-      ts:     Date.now()
-    };
-    db.ref('cloudSettings').set(settings);
-  }, 300);
+  var time   = document.getElementById('inp-time')   ? document.getElementById('inp-time').value   : '';
+  var colour = document.getElementById('inp-colour') ? document.getElementById('inp-colour').value : '';
+  var cruise = document.getElementById('inp-cruise') ? document.getElementById('inp-cruise').value : '';
+  var type   = cruiseType;
+  if (!time) return;
+  var key = time.replace(/[^a-zA-Z0-9]/g, '_');
+  db.ref('cruiseConfigs/' + key).set({ time: time, colour: colour, cruise: cruise, type: type, ts: Date.now() });
+  showToast('Config saved for ' + time);
 }
 
-function applyCloudSettings(s) {
-  // Apply type tab first
-  if (s.type && s.type !== cruiseType) {
-    setType(s.type);
-  }
-
-  // Apply time
-  if (s.time) {
-    var timeSel = document.getElementById('inp-time');
-    if (timeSel) {
-      for (var i = 0; i < timeSel.options.length; i++) {
-        if (timeSel.options[i].value === s.time || timeSel.options[i].text === s.time) {
-          timeSel.selectedIndex = i; break;
-        }
-      }
-      syncTime();
-    }
-  }
-
-  // Apply colour (if not locked)
-  if (s.colour && s.type !== 'premium' && s.type !== 'beer') {
-    var colSel = document.getElementById('inp-colour');
-    if (colSel) { colSel.value = s.colour; syncColour(); }
-  }
-
-  // Apply cruise/boat
-  if (s.cruise) {
-    var cruiseSel = document.getElementById('inp-cruise');
-    if (cruiseSel) {
-      for (var j = 0; j < cruiseSel.options.length; j++) {
-        if (cruiseSel.options[j].text === s.cruise || cruiseSel.options[j].value === s.cruise) {
-          cruiseSel.selectedIndex = j; break;
-        }
-      }
-      syncCruise();
-    }
-  }
+// Load all saved configs from Firebase on startup
+function loadCruiseConfigs() {
+  if (!db) return;
+  db.ref('cruiseConfigs').on('value', function(snap) {
+    var configs = snap.val() || {};
+    // Store globally so TYPE_TIMES and restoreTabState can use them
+    window.savedCruiseConfigs = configs;
+    applyCruiseConfigs(configs);
+  });
 }
+
+function applyCruiseConfigs(configs) {
+  // Update the classic TYPE_TIMES entries with saved colours/boats
+  Object.keys(configs).forEach(function(key) {
+    var cfg = configs[key];
+    if (!cfg || !cfg.time) return;
+    // Find matching entry in TYPE_TIMES.classic and update it
+    var classicTimes = TYPE_TIMES ? TYPE_TIMES['classic'] : null;
+    if (classicTimes) {
+      classicTimes.forEach(function(entry) {
+        if (entry.time === cfg.time) {
+          if (cfg.colour) entry.colour = cfg.colour;
+          if (cfg.cruise) entry.cruise = cfg.cruise;
+        }
+      });
+    }
+  });
+}
+
+function showToast(msg) {
+  var t = document.getElementById('config-toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.style.opacity = '1';
+  setTimeout(function() { t.style.opacity = '0'; }, 2500);
+}
+
+function pushSettings() {} // no-op — kept for compatibility
+function applyCloudSettings() {} // no-op
 
 // ── CSV guest list ──────────────────────────────────────────
 
@@ -1820,14 +1823,12 @@ if (dz) {
     if (cruiseType === 'classic') {
       syncClassicSelection();
       syncFilterFromTicket();
-      pushSettings();
       return;
     }
     var val = document.getElementById('inp-time').value;
     document.getElementById('out-time').textContent = subtractMins(val, 15);
     updateHeadline();
     syncFilterFromTicket();
-    pushSettings();
   }
 
   function syncFilterFromTicket() {
@@ -1850,7 +1851,6 @@ if (dz) {
   function syncColour() {
     var val = document.getElementById('inp-colour').value;
     document.getElementById('out-colour').textContent = val;
-    pushSettings();
   }
 
   function syncCruise() {
@@ -1902,7 +1902,6 @@ if (dz) {
     }
     updateCountdown();
   document.getElementById('out-headline').dataset.title = titles[t];
-    pushSettings();
 
     var passBody = document.querySelector('.pass-body');
     passBody.classList.remove('classic-mode');
