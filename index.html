@@ -1203,46 +1203,79 @@ if (myNameInput) myNameInput.value = getMyName();
 //  Does NOT sync live operator selections.
 // ═══════════════════════════════════════════════════════
 
-// Save config for a specific cruise slot (called manually via "Save Config" button)
+// Cruise configs are always saved to localStorage (works offline, on any
+// computer, with or without cloud sync set up), and also pushed to
+// Firebase when available so every computer picks it up live.
+var CRUISE_CONFIG_KEY = 'passturbator_cruise_configs';
+
+function loadLocalCruiseConfigs() {
+  try {
+    return JSON.parse(localStorage.getItem(CRUISE_CONFIG_KEY) || '{}');
+  } catch (e) { return {}; }
+}
+
+function saveLocalCruiseConfigs(configs) {
+  try { localStorage.setItem(CRUISE_CONFIG_KEY, JSON.stringify(configs)); } catch (e) {}
+}
+
+// Save config for a specific cruise slot (called manually via "Save changes" button)
 function saveCruiseConfig() {
-  if (!db) return;
   var time   = document.getElementById('inp-time')   ? document.getElementById('inp-time').value   : '';
   var colour = document.getElementById('inp-colour') ? document.getElementById('inp-colour').value : '';
   var cruise = document.getElementById('inp-cruise') ? document.getElementById('inp-cruise').value : '';
   var type   = cruiseType;
-  if (!time) return;
+  if (!time || type !== 'classic') return;
   var key = time.replace(/[^a-zA-Z0-9]/g, '_');
-  db.ref('cruiseConfigs/' + key).set({ time: time, colour: colour, cruise: cruise, type: type, ts: Date.now() });
-  showToast('Config saved for ' + time);
+  var cfg = { time: time, colour: colour, cruise: cruise, type: type, ts: Date.now() };
+
+  // Always save locally so it works even without cloud sync
+  var configs = loadLocalCruiseConfigs();
+  configs[key] = cfg;
+  saveLocalCruiseConfigs(configs);
+  applyCruiseConfigs(configs);
+
+  // Also push to Firebase, when configured, so other computers pick it up
+  if (db) db.ref('cruiseConfigs/' + key).set(cfg);
+
+  showToast('Saved — list updated for ' + time);
 }
 
-// Load all saved configs from Firebase on startup
+// Load all saved configs on startup: local first (instant, offline-safe),
+// then Firebase overlays/merges anything newer from other computers.
 function loadCruiseConfigs() {
+  applyCruiseConfigs(loadLocalCruiseConfigs());
   if (!db) return;
   db.ref('cruiseConfigs').on('value', function(snap) {
     var configs = snap.val() || {};
-    // Store globally so TYPE_TIMES and restoreTabState can use them
-    window.savedCruiseConfigs = configs;
-    applyCruiseConfigs(configs);
+    // Merge into local cache too, so this computer stays in sync if it
+    // goes offline later
+    var merged = loadLocalCruiseConfigs();
+    Object.keys(configs).forEach(function(k) { merged[k] = configs[k]; });
+    saveLocalCruiseConfigs(merged);
+    applyCruiseConfigs(merged);
   });
 }
 
 function applyCruiseConfigs(configs) {
   // Update the classic TYPE_TIMES entries with saved colours/boats
+  var classicTimes = TYPE_TIMES ? TYPE_TIMES['classic'] : null;
+  if (!classicTimes) return;
+  var changed = false;
   Object.keys(configs).forEach(function(key) {
     var cfg = configs[key];
     if (!cfg || !cfg.time) return;
-    // Find matching entry in TYPE_TIMES.classic and update it
-    var classicTimes = TYPE_TIMES ? TYPE_TIMES['classic'] : null;
-    if (classicTimes) {
-      classicTimes.forEach(function(entry) {
-        if (entry.time === cfg.time) {
-          if (cfg.colour) entry.colour = cfg.colour;
-          if (cfg.cruise) entry.cruise = cfg.cruise;
-        }
-      });
-    }
+    classicTimes.forEach(function(entry) {
+      if (entry.time === cfg.time) {
+        if (cfg.colour && entry.colour !== cfg.colour) { entry.colour = cfg.colour; changed = true; }
+        if (cfg.cruise && entry.cruise !== cfg.cruise) { entry.cruise = cfg.cruise; changed = true; }
+      }
+    });
   });
+  // Refresh the visible dropdown immediately if it's showing classic times
+  // and something actually changed, so edits appear without a reload.
+  if (changed && typeof cruiseType !== 'undefined' && cruiseType === 'classic') {
+    rebuildTimes('classic');
+  }
 }
 
 function showToast(msg) {
@@ -1329,6 +1362,15 @@ function parseCSV(text, filename) {
     if (/^b[0o]?2\b/i.test(scheduleTail)) {
       scheduleParts[scheduleParts.length - 1] = ' Beer';
       schedule = scheduleParts.join('>');
+    }
+    // Same idea for Junior Explorer — the booking system exports it under
+    // various messy names like "Lake Minnewanka Cruise - Family Experience
+    // Time" (no consistent '>' separator to split on), so just detect the
+    // word "family" anywhere and replace the whole thing with a clean
+    // label. guessType() below already matches on "family", so this keeps
+    // that working while fixing the display.
+    if (/family/i.test(schedule)) {
+      schedule = 'Family Experience';
     }
     var pax      = parseInt(row[iPax]) || 1;
     var orderId  = iOrder !== -1 ? (row[iOrder] || '').trim() : '';
@@ -1635,21 +1677,34 @@ if (dz) {
     '6:00 PM','6:30 PM','7:00 PM'
   ];
   var TYPE_TIMES = {
-    premium: ['10:00 AM', '12:00 PM', '6:00 PM'],
+    premium: ['10:00 AM', '12:00 PM', '1:00 PM', '6:00 PM', '7:00 PM'],
     classic: [
+      // Peak-season additions below are marked NEW — boat/colour are best-guess
+      // placeholders (matched by boat size from last season's booking data).
+      // Fix them right on the ticket (pick the correct boat/colour for that
+      // slot) then hit "💾 Save changes" — the list updates immediately and
+      // remembers it for everyone, so this only has to be done once.
+      {time:'9:00 AM',  cruise:'DPII',        colour:'yellow'}, // NEW
       {time:'10:00 AM', cruise:'DPII PREMIUM', colour:'yellow'},
       {time:'10:10 AM', cruise:'SL', colour:'blue'},
       {time:'10:30 AM', cruise:'MII', colour:'green'},
+      {time:'10:45 AM', cruise:'SL',        colour:'blue'}, // NEW
       {time:'11:00 AM', cruise:'AE / RMV', colour:'green'},
       {time:'11:30 AM', cruise:'SL', colour:'blue'},
       {time:'12:00 PM', cruise:'DPII PREMIUM', colour:'yellow'},
+      {time:'12:20 PM', cruise:'AE',        colour:'green'}, // NEW
       {time:'12:30 PM', cruise:'MII', colour:'green'},
       {time:'1:00 PM', cruise:'AE', colour:'blue'},
+      {time:'1:20 PM', cruise:'MII',        colour:'green'}, // NEW
       {time:'1:30 PM', cruise:'SL', colour:'blue'},
+      {time:'1:40 PM', cruise:'SL',        colour:'blue'}, // NEW
       {time:'2:00 PM', cruise:'DPII', colour:'blue'},
+      {time:'2:20 PM', cruise:'DPII',       colour:'blue'}, // NEW
       {time:'2:30 PM', cruise:'MII', colour:'green'},
+      {time:'2:40 PM', cruise:'MII',        colour:'green'}, // NEW
       {time:'3:00 PM', cruise:'AE', colour:'blue'},
       {time:'3:30 PM', cruise:'SL', colour:'yellow'},
+      {time:'3:40 PM', cruise:'AE',        colour:'blue'}, // NEW
       {time:'4:00 PM', cruise:'DPII', colour:'blue'},
       {time:'4:30 PM', cruise:'MII', colour:'green'},
       {time:'5:00 PM', cruise:'AE — CLASSIC', colour:'green'},
@@ -1657,7 +1712,8 @@ if (dz) {
       {time:'6:00 PM', cruise:'DPII PREMIUM', colour:'yellow'},
       {time:'6:00 PM', cruise:'MII', colour:'blue'},
       {time:'5:00 PM', cruise:'MII — BEER', colour:'yellow'},
-      {time:'5:00 PM', cruise:'AE — CLASSIC', colour:'blue'}
+      {time:'5:00 PM', cruise:'AE — CLASSIC', colour:'blue'},
+      {time:'5:30 PM', cruise:'SL',        colour:'yellow'} // NEW
     ],
     junior:  ALL_TIMES,
     beer:    ['5:00 PM']  /* locked — Beer Voyage only runs at 5pm */
@@ -1877,6 +1933,9 @@ if (dz) {
         (i===3 && t==='beer')
       );
     });
+
+    var saveConfigBtn = document.querySelector('.btn-save-config');
+    if (saveConfigBtn) saveConfigBtn.style.display = (t === 'classic') ? '' : 'none';
 
     var nameCtrl = document.getElementById('ctrl-name');
     var rowName  = document.getElementById('row-name');
