@@ -1291,7 +1291,7 @@ button:focus-visible, .guest-item:focus-visible { outline: 2px solid rgba(130,22
 
   <div class="ctrl-group">
     <label>Seat</label>
-    <input id="inp-seat" type="text" value="" oninput="sync();seatTyped()" onchange="checkSeatWarning()" style="width:72px">
+    <input id="inp-seat" type="text" value="" oninput="sync();seatTyped()" onchange="checkSeatWarning()" onblur="clearTimeout(_seatTimer);saveSeatForActive()" style="width:72px">
   </div>
 
   <div class="ctrl-group">
@@ -2225,7 +2225,7 @@ var _seatTimer = null;
 // Typing in the ticket's Seat box shows up on the floor plan (and every computer) right away
 function seatTyped() {
   clearTimeout(_seatTimer);
-  _seatTimer = setTimeout(saveSeatForActive, 200);
+  _seatTimer = setTimeout(saveSeatForActive, 800);
 }
 
 function fpClearSeat() {
@@ -2940,6 +2940,10 @@ function showCopyToast(text) {
 }
 
 function pickGuest(idx) {
+  // Save previous guest's seat BEFORE changing activeIdx
+  clearTimeout(_seatTimer);
+  saveSeatForActive();
+
   activeIdx = idx;
   var g = allGuests[idx];
   document.querySelectorAll('.guest-item').forEach(function(el) { el.classList.remove('active'); });
@@ -2957,7 +2961,6 @@ function pickGuest(idx) {
 
   // show THIS party's rows (blank if none yet) so a stale seat never rides along to the next ticket
   var savedSeat = g.key ? lastSeatMap[fbKey(g.key)] : null;
-  clearTimeout(_seatTimer);
   manualId = null;
   document.getElementById('inp-seat').value = (savedSeat && savedSeat.seat) ? savedSeat.seat : '';
 
